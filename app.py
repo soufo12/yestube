@@ -7,14 +7,15 @@ import glob
 
 app = Flask(__name__)
 
-# On s'assure que le dossier existe au démarrage
+# Configuration du dossier de téléchargement avec chemin absolu
 DOWNLOAD_DIR = os.path.join(os.getcwd(), "downloads")
 if not os.path.exists(DOWNLOAD_DIR):
     os.makedirs(DOWNLOAD_DIR)
 
-# Gestion des cookies (Variable d'environnement Railway)
+# Gestion des Cookies (Variable d'environnement Railway)
 COOKIES_CONTENT = os.environ.get("YOUTUBE_COOKIES")
 COOKIES_FILE = "cookies.txt"
+
 if COOKIES_CONTENT:
     with open(COOKIES_FILE, "w") as f:
         f.write(COOKIES_CONTENT)
@@ -29,12 +30,12 @@ def download():
     quality = request.form.get('quality', '1080')
     ext = request.form.get('ext', 'mp4')
 
+    # ID unique pour éviter les conflits entre utilisateurs
     file_id = str(uuid.uuid4())
-    # Template flexible pour l'extension
     output_template = os.path.join(DOWNLOAD_DIR, f"{file_id}.%(ext)s")
 
+    # Configuration yt-dlp optimisée pour la fusion FFmpeg
     ydl_opts = {
-        # On demande le meilleur format compatible
         'format': f'bestvideo[height<={quality}][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
         'outtmpl': output_template,
         'merge_output_format': ext if ext != 'mp3' else None,
@@ -42,9 +43,11 @@ def download():
         'no_warnings': True,
     }
 
+    # Ajout des cookies si présents
     if os.path.exists(COOKIES_FILE):
         ydl_opts['cookiefile'] = COOKIES_FILE
 
+    # Conversion spécifique pour le MP3
     if ext == 'mp3':
         ydl_opts['postprocessors'] = [{
             'key': 'FFmpegExtractAudio',
@@ -54,27 +57,28 @@ def download():
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            # Téléchargement et fusion
             info = ydl.extract_info(url, download=True)
             
-            # --- DETECTION DYNAMIQUE DU FICHIER ---
-            # On cherche n'importe quel fichier qui commence par notre file_id
+            # --- RECHERCHE DYNAMIQUE DU FICHIER ---
+            # On cherche tout fichier commençant par file_id (mp4, webm, mkv, etc.)
             search_pattern = os.path.join(DOWNLOAD_DIR, f"{file_id}.*")
             found_files = glob.glob(search_pattern)
             
             if not found_files:
-                return "Erreur : Le fichier a été téléchargé mais est introuvable sur le serveur. Vérifiez que FFmpeg est installé."
+                return "Erreur : Le fichier n'a pas été généré. Vérifiez l'installation de FFmpeg."
             
             final_file = found_files[0]
 
+            # Nettoyage automatique du serveur après l'envoi
             @after_this_request
             def remove_file(response):
                 try:
-                    # On attend un peu que le transfert commence
-                    time.sleep(10)
+                    time.sleep(10) # Laisse le temps au téléchargement de démarrer
                     if os.path.exists(final_file):
                         os.remove(final_file)
                 except Exception as e:
-                    print(f"Erreur suppression : {e}")
+                    print(f"Erreur de nettoyage : {e}")
                 return response
 
             return send_file(
@@ -86,6 +90,7 @@ def download():
     except Exception as e:
         return f"Erreur de téléchargement : {str(e)}"
 
+# --- PORT 8080 POUR RAILWAY ---
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
