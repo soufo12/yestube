@@ -7,18 +7,10 @@ import glob
 
 app = Flask(__name__)
 
-# Configuration du dossier temporaire avec chemin absolu
-DOWNLOAD_DIR = os.path.join(os.getcwd(), "downloads")
+# Dossier local pour Railway
+DOWNLOAD_DIR = "downloads"
 if not os.path.exists(DOWNLOAD_DIR):
     os.makedirs(DOWNLOAD_DIR)
-
-# Gestion des Cookies (Variable d'environnement Railway YOUTUBE_COOKIES)
-COOKIES_CONTENT = os.environ.get("YOUTUBE_COOKIES")
-COOKIES_FILE = "cookies.txt"
-
-if COOKIES_CONTENT:
-    with open(COOKIES_FILE, "w") as f:
-        f.write(COOKIES_CONTENT)
 
 @app.route('/')
 def index():
@@ -27,64 +19,50 @@ def index():
 @app.route('/download', methods=['POST'])
 def download():
     url = request.form.get('url')
-    quality = request.form.get('quality', '1080')
+    quality = request.form.get('quality', '720') # On reste sur 720p pour maximiser le succès
     ext = request.form.get('ext', 'mp4')
 
     file_id = str(uuid.uuid4())
-    output_template = os.path.join(DOWNLOAD_DIR, f"{file_id}.%(ext)s")
+    output_template = f"{DOWNLOAD_DIR}/{file_id}.%(ext)s"
 
-    # Configuration yt-dlp : tente le MP4 HD, sinon ce qui est dispo
+    # Options ultra-compatibles
     ydl_opts = {
-        'format': f'bestvideo[height<={quality}][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+        'format': 'bestvideo[height<=720]+bestaudio/best',
         'outtmpl': output_template,
-        'merge_output_format': ext if ext != 'mp3' else None,
-        'quiet': True,
-        'no_warnings': True,
+        'noplaylist': True,
     }
 
-    if os.path.exists(COOKIES_FILE):
-        ydl_opts['cookiefile'] = COOKIES_FILE
-
-    if ext == 'mp3':
-        ydl_opts['postprocessors'] = [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '192',
-        }]
+    # Utilisation des cookies via variable d'env
+    if os.environ.get("YOUTUBE_COOKIES"):
+        with open("cookies.txt", "w") as f:
+            f.write(os.environ.get("YOUTUBE_COOKIES"))
+        ydl_opts['cookiefile'] = "cookies.txt"
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
             
-            # Recherche du fichier généré (peu importe l'extension finale après fusion)
-            search_pattern = os.path.join(DOWNLOAD_DIR, f"{file_id}.*")
-            found_files = glob.glob(search_pattern)
+            # On cherche le fichier par son ID
+            files = glob.glob(f"{DOWNLOAD_DIR}/{file_id}.*")
+            if not files:
+                return "Erreur : Fichier non créé par le serveur."
             
-            if not found_files:
-                return "Erreur : Échec de la création du fichier (Vérifiez FFmpeg)."
-            
-            final_file = found_files[0]
+            final_file = files[0]
 
             @after_this_request
             def remove_file(response):
                 try:
-                    time.sleep(15) # On laisse 15s pour que le stream commence bien
+                    time.sleep(15)
                     if os.path.exists(final_file):
                         os.remove(final_file)
-                except:
-                    pass
+                except: pass
                 return response
 
-            return send_file(
-                final_file,
-                as_attachment=True,
-                download_name=f"{info.get('title', 'video')}.{ext}"
-            )
+            return send_file(final_file, as_attachment=True, download_name=f"video.{ext}")
             
     except Exception as e:
-        return f"Erreur de téléchargement : {str(e)}"
+        return f"Erreur : {str(e)}"
 
 if __name__ == '__main__':
-    # Indispensable pour Railway
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
