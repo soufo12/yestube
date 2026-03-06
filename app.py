@@ -6,10 +6,17 @@ import time
 
 app = Flask(__name__)
 
-# Dossier temporaire
 DOWNLOAD_DIR = "downloads"
 if not os.path.exists(DOWNLOAD_DIR):
     os.makedirs(DOWNLOAD_DIR)
+
+# Récupération des cookies depuis Railway pour éviter le blocage "Bot"
+COOKIES_CONTENT = os.environ.get("YOUTUBE_COOKIES")
+COOKIES_FILE = "cookies.txt"
+
+if COOKIES_CONTENT:
+    with open(COOKIES_FILE, "w") as f:
+        f.write(COOKIES_CONTENT)
 
 @app.route('/')
 def index():
@@ -28,41 +35,33 @@ def download():
         'format': f'bestvideo[height<={quality}]+bestaudio/best' if ext != 'mp3' else 'bestaudio/best',
         'outtmpl': output_template,
         'merge_output_format': ext if ext != 'mp3' else None,
-        'postprocessor_args': ['-c:v', 'copy', '-c:a', 'aac'] if ext != 'mp3' else [],
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '192',
-        }] if ext == 'mp3' else [{
-            'key': 'FFmpegVideoConvertor',
-            'preferedformat': ext,
-        }],
-        'quiet': True
+        'quiet': True,
     }
+
+    if os.path.exists(COOKIES_FILE):
+        ydl_opts['cookiefile'] = COOKIES_FILE
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
             actual_ext = ext if ext != 'mp3' else 'mp3'
             final_file = os.path.join(DOWNLOAD_DIR, f"{file_id}.{actual_ext}")
-            
+
             @after_this_request
             def remove_file(response):
                 try:
                     time.sleep(2) 
                     if os.path.exists(final_file):
                         os.remove(final_file)
-                except Exception as e:
-                    print(f"Erreur nettoyage: {e}")
+                except Exception:
+                    pass
                 return response
 
             return send_file(final_file, as_attachment=True, download_name=f"{info['title']}.{actual_ext}")
     except Exception as e:
         return f"Erreur : {str(e)}"
 
-# --- CETTE PARTIE EST LA PLUS IMPORTANTE POUR RAILWAY ---
 if __name__ == '__main__':
-    # On récupère le port via l'environnement, sinon 5000 en local
-    port = int(os.environ.get("PORT", 5000))
-    # On force l'hôte à 0.0.0.0 pour que le monde extérieur y accède
+    # Force le port 8080 pour Railway
+    port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
