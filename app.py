@@ -7,13 +7,14 @@ import glob
 
 app = Flask(__name__)
 
-DOWNLOAD_DIR = "downloads"
+# On s'assure que le dossier existe au démarrage
+DOWNLOAD_DIR = os.path.join(os.getcwd(), "downloads")
 if not os.path.exists(DOWNLOAD_DIR):
     os.makedirs(DOWNLOAD_DIR)
 
+# Gestion des cookies (Variable d'environnement Railway)
 COOKIES_CONTENT = os.environ.get("YOUTUBE_COOKIES")
 COOKIES_FILE = "cookies.txt"
-
 if COOKIES_CONTENT:
     with open(COOKIES_FILE, "w") as f:
         f.write(COOKIES_CONTENT)
@@ -29,10 +30,11 @@ def download():
     ext = request.form.get('ext', 'mp4')
 
     file_id = str(uuid.uuid4())
-    # On utilise un template simple pour laisser yt-dlp gérer l'extension finale
+    # Template flexible pour l'extension
     output_template = os.path.join(DOWNLOAD_DIR, f"{file_id}.%(ext)s")
 
     ydl_opts = {
+        # On demande le meilleur format compatible
         'format': f'bestvideo[height<={quality}][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
         'outtmpl': output_template,
         'merge_output_format': ext if ext != 'mp3' else None,
@@ -54,29 +56,30 @@ def download():
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
             
-            # RECHERCHE DYNAMIQUE DU FICHIER
-            # Au lieu de deviner l'extension, on cherche le fichier qui commence par file_id
+            # --- DETECTION DYNAMIQUE DU FICHIER ---
+            # On cherche n'importe quel fichier qui commence par notre file_id
             search_pattern = os.path.join(DOWNLOAD_DIR, f"{file_id}.*")
-            files = glob.glob(search_pattern)
+            found_files = glob.glob(search_pattern)
             
-            if not files:
-                return "Erreur : Le fichier n'a pas pu être généré sur le serveur."
+            if not found_files:
+                return "Erreur : Le fichier a été téléchargé mais est introuvable sur le serveur. Vérifiez que FFmpeg est installé."
             
-            final_file = files[0] # On prend le premier fichier correspondant trouvé
+            final_file = found_files[0]
 
             @after_this_request
             def remove_file(response):
                 try:
-                    time.sleep(5) # On laisse plus de temps pour le transfert
+                    # On attend un peu que le transfert commence
+                    time.sleep(10)
                     if os.path.exists(final_file):
                         os.remove(final_file)
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(f"Erreur suppression : {e}")
                 return response
 
             return send_file(
-                final_file, 
-                as_attachment=True, 
+                final_file,
+                as_attachment=True,
                 download_name=f"{info.get('title', 'video')}.{ext}"
             )
             
